@@ -1,0 +1,127 @@
+# Deckboard Home Assistant Configuration
+#
+# This file defines how the Stream Deck+ connects to Home Assistant.
+# All HA entity references are confined to the bindings section.
+# The UI layout in screens references only logical binding keys.
+
+# -- Device settings --
+device:
+  type: "Stream Deck +"
+  index: 0
+  brightness: 80
+
+# -- Bindings --
+# Map logical names to HA entities and their adapter domain.
+# The adapter normalizes state and resolves actions.
+bindings:
+  lights.kitchen:
+    entity: light.kitchen
+    adapter: light
+
+  lights.living_room:
+    entity: light.living_room
+    adapter: light
+
+  media.living_room:
+    entity: media_player.living_room
+    adapter: media_player
+
+  media.bedroom:
+    entity: media_player.bedroom_speaker
+    adapter: media_player
+
+# -- Screens --
+screens:
+  home:
+    # Keys (physical buttons, 0-7 on Stream Deck+)
+    keys:
+      0:
+        icon: mdi:lightbulb
+        label: Kitchen
+        bind:
+          state: lights.kitchen.is_on
+        actions:
+          press: lights.kitchen.toggle
+
+      1:
+        icon: mdi:lightbulb
+        label: Living Room
+        bind:
+          state: lights.living_room.is_on
+        actions:
+          press: lights.living_room.toggle
+
+      2:
+        icon: mdi:play-pause
+        label: Music
+        bind:
+          state: media.living_room.is_playing
+        actions:
+          press: media.living_room.play_pause
+
+      3:
+        icon: mdi:skip-next
+        label: Next
+        actions:
+          press: media.living_room.next_track
+
+      4:
+        icon: mdi:skip-previous
+        label: Previous
+        actions:
+          press: media.living_room.previous_track
+
+      7:
+        icon: mdi:home
+        label: Scenes
+        actions:
+          press: lights.living_room.turn_on
+
+    # Encoders (physical dials, 0-3 on Stream Deck+)
+    encoders:
+      0:
+        actions:
+          turn:
+            binding: lights.kitchen
+            action: brightness_up
+            step: 5
+          press: lights.kitchen.toggle
+
+      1:
+        actions:
+          turn:
+            binding: lights.living_room
+            action: brightness_up
+            step: 5
+          press: lights.living_room.toggle
+
+      2:
+        actions:
+          turn:
+            binding: media.living_room
+            action: volume_up
+            step: 3
+          press: media.living_room.mute_toggle
+
+    # Cards (touchscreen zones, 0-3 on Stream Deck+)
+    cards:
+      0:
+        type: light
+        binding: lights.kitchen
+
+      1:
+        type: light
+        binding: lights.living_room
+
+      2:
+        type: media
+        binding: media.living_room
+
+      3:
+        type: status
+        icon: mdi:speaker
+        label: Bedroom
+        bind:
+          value: media.bedroom.title
+        actions:
+          tap: media.bedroom.play_pause
