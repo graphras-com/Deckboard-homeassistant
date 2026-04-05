@@ -1,6 +1,7 @@
 """Configuration system -- loads and validates YAML configuration.
 
 The configuration defines:
+  * **Home Assistant connection** -- URL, token, reconnect settings.
   * **Bindings** -- logical names mapped to HA entities and adapter domains.
   * **Screens** -- named layouts with keys, encoders, and cards.
   * **Keys** -- icon, label, state binding, and press/release actions.
@@ -14,6 +15,7 @@ No HA logic is embedded in UI code; everything is declared here.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -112,9 +114,25 @@ class BindingConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class HomeAssistantConfig:
+    """Home Assistant connection settings.
+
+    Attributes:
+        url: Base URL of the HA instance.
+        token: Long-lived access token (resolved from env if ``token_env`` used).
+        reconnect_delay: Seconds between reconnection attempts.
+    """
+
+    url: str = "http://homeassistant.local:8123"
+    token: str = ""
+    reconnect_delay: float = 5.0
+
+
+@dataclass(frozen=True, slots=True)
 class DeckConfig:
     """Top-level configuration."""
 
+    homeassistant: HomeAssistantConfig = field(default_factory=HomeAssistantConfig)
     bindings: list[BindingConfig] = field(default_factory=list)
     screens: list[ScreenConfig] = field(default_factory=list)
     device_type: str = "Stream Deck +"
@@ -228,6 +246,28 @@ def _parse_binding(key: str, raw: dict[str, Any]) -> BindingConfig:
     )
 
 
+def _parse_homeassistant(raw: dict[str, Any]) -> HomeAssistantConfig:
+    """Parse the ``homeassistant`` config section.
+
+    Supports ``token`` (inline) or ``token_env`` (environment variable name).
+    If both are absent, falls back to ``DECKBOARD_HA_TOKEN`` env var.
+    """
+    url = raw.get("url", "http://homeassistant.local:8123")
+    reconnect_delay = float(raw.get("reconnect_delay_seconds", 5.0))
+
+    # Resolve token: explicit > env var name > default env var.
+    token = raw.get("token", "")
+    if not token:
+        token_env = raw.get("token_env", "DECKBOARD_HA_TOKEN")
+        token = os.environ.get(token_env, "")
+
+    return HomeAssistantConfig(
+        url=url,
+        token=token,
+        reconnect_delay=reconnect_delay,
+    )
+
+
 def load_config(path: str | Path) -> DeckConfig:
     """Load and parse a YAML configuration file.
 
@@ -241,6 +281,8 @@ def load_config(path: str | Path) -> DeckConfig:
     with path.open() as f:
         raw = yaml.safe_load(f) or {}
 
+    ha_config = _parse_homeassistant(raw.get("homeassistant", {}))
+
     bindings = [
         _parse_binding(key, cfg) for key, cfg in raw.get("bindings", {}).items()
     ]
@@ -250,6 +292,7 @@ def load_config(path: str | Path) -> DeckConfig:
     device = raw.get("device", {})
 
     return DeckConfig(
+        homeassistant=ha_config,
         bindings=bindings,
         screens=screens,
         device_type=device.get("type", "Stream Deck +"),

@@ -1,0 +1,42 @@
+# systemd service unit for Deckboard Home Assistant
+#
+# Install:
+#   sudo cp deckboard-ha.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now deckboard-ha
+#
+# Logs:
+#   journalctl -u deckboard-ha -f
+
+[Unit]
+Description=Deckboard Home Assistant Stream Deck Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+
+# Adjust paths to match your installation.
+WorkingDirectory=/home/pi/deckboard-homeassistant
+ExecStart=/home/pi/deckboard-homeassistant/.venv/bin/python main.py /home/pi/deckboard-homeassistant/deckboard.yaml
+
+# Environment file containing DECKBOARD_HA_TOKEN (and optionally other vars).
+EnvironmentFile=/home/pi/deckboard-homeassistant/.env
+
+# Restart on failure with a short delay.
+Restart=on-failure
+RestartSec=5
+
+# Stream Deck USB access -- ensure the user is in the 'input' group
+# or use udev rules granting access to the hidraw device.
+# SupplementaryGroups=input
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=deckboard-ha
+
+[Install]
+WantedBy=multi-user.target

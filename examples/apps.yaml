@@ -1,9 +1,0 @@
-# AppDaemon apps.yaml configuration for Deckboard HA integration.
-#
-# Place this in your AppDaemon apps directory (e.g. /config/appdaemon/apps/).
-# Adjust config_path to point to your deckboard.yaml configuration file.
-
-deckboard:
-  module: deckboard_homeassistant.app
-  class: DeckboardApp
-  config_path: /config/appdaemon/apps/deckboard.yaml

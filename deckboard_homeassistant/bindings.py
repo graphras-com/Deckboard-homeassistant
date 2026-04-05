@@ -59,10 +59,13 @@ class Binding:
         except ValueError:
             pass
 
-    def notify(self, attr: str, value: Any, loop: asyncio.AbstractEventLoop) -> None:
+    async def notify(self, attr: str, value: Any) -> None:
         """Push a normalized value to all subscribers of *attr*."""
         for cb in self._subscribers.get(attr, []):
-            asyncio.run_coroutine_threadsafe(cb(attr, value), loop)
+            try:
+                await cb(attr, value)
+            except Exception:
+                log.exception("Error in subscriber callback for %s.%s", self.key, attr)
 
 
 class BindingManager:
@@ -71,18 +74,15 @@ class BindingManager:
     Parameters:
         state_provider: For subscribing to raw HA state changes.
         command_bus: For executing resolved actions.
-        loop: Event loop for scheduling callbacks.
     """
 
     def __init__(
         self,
         state_provider: StateProvider,
         command_bus: CommandBus,
-        loop: asyncio.AbstractEventLoop,
     ) -> None:
         self._state_provider = state_provider
         self._command_bus = command_bus
-        self._loop = loop
         self._bindings: dict[str, Binding] = {}
 
     def register(
@@ -136,7 +136,7 @@ class BindingManager:
         # Enrich with current normalized state so adapters can compute
         # relative changes (e.g. brightness_up needs current brightness).
         try:
-            raw_state = await self._get_raw_state(binding.entity_id)
+            raw_state = self._get_entity_state(binding.entity_id)
             normalized = binding.adapter.normalize(binding.entity_id, raw_state)
             args.setdefault("current_brightness", normalized.get("brightness_pct", 50))
             args.setdefault("current_volume", normalized.get("volume_pct", 50))
@@ -162,10 +162,10 @@ class BindingManager:
         binding = self._bindings.get(key)
         if binding is None:
             return
-        raw_state = await self._get_raw_state(binding.entity_id)
+        raw_state = self._get_entity_state(binding.entity_id)
         normalized = binding.adapter.normalize(binding.entity_id, raw_state)
         for attr, value in normalized.items():
-            binding.notify(attr, value, self._loop)
+            await binding.notify(attr, value)
 
     async def refresh_all(self) -> None:
         """Refresh all registered bindings."""
@@ -176,40 +176,33 @@ class BindingManager:
     # Internal
     # ------------------------------------------------------------------
 
-    async def _get_raw_state(self, entity_id: str) -> dict[str, Any]:
-        """Fetch full raw state dict from the state provider."""
-        # We need the full attribute dict. The bridge caches it keyed by
-        # entity_id; fetching "entity_id" returns the "state" attribute,
-        # but we need everything. We'll fetch attributes individually.
-        #
-        # The bridge stores the full cache internally. For now, we fetch
-        # the main state and construct what we can.
-        state_val = await self._state_provider.get_value(entity_id)
-        # The bridge actually caches a full dict keyed by entity_id.
-        # get_value with just entity_id returns the "state" string.
-        # We need a way to get the full dict. We'll access the bridge
-        # cache directly if available (it implements StateProvider).
-        from deckboard_homeassistant.bridge import HomeAssistantBridge
+    def _get_entity_state(self, entity_id: str) -> dict[str, Any]:
+        """Get the full cached state dict for an entity via the bridge.
 
-        if isinstance(self._state_provider, HomeAssistantBridge):
-            cached = self._state_provider._cache.get(entity_id, {})
-            if cached:
-                return dict(cached)
-
-        # Fallback: return minimal state.
-        return {"state": state_val}
+        The bridge exposes ``get_entity_state()`` which returns the full
+        flattened attribute dict from its cache. This avoids the need
+        for async fetches during action resolution.
+        """
+        if hasattr(self._state_provider, "get_entity_state"):
+            return self._state_provider.get_entity_state(entity_id)  # type: ignore[attr-defined]
+        # Fallback for mock providers without get_entity_state.
+        return {}
 
     def _make_state_handler(
         self, binding: Binding
     ) -> Callable[[str, Any], Coroutine[Any, Any, None]]:
-        """Create a raw state change callback that normalizes and dispatches."""
+        """Create a raw state change callback that normalizes and dispatches.
 
-        async def _on_raw_state_change(key: str, new_value: Any) -> None:
-            # Fetch full state for normalization.
-            raw_state = await self._get_raw_state(binding.entity_id)
+        The bridge calls this with ``(entity_id, full_state_dict)`` when
+        an entity's state changes.
+        """
+
+        async def _on_raw_state_change(entity_id: str, raw_state: Any) -> None:
+            if not isinstance(raw_state, dict):
+                raw_state = {"state": raw_state}
             normalized = binding.adapter.normalize(binding.entity_id, raw_state)
 
             for attr, value in normalized.items():
-                binding.notify(attr, value, self._loop)
+                await binding.notify(attr, value)
 
         return _on_raw_state_change

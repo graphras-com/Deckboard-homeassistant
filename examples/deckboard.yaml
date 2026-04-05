@@ -1,8 +1,18 @@
 # Deckboard Home Assistant Configuration
 #
 # This file defines how the Stream Deck+ connects to Home Assistant.
+# Designed for standalone deployment on a Raspberry Pi.
+#
 # All HA entity references are confined to the bindings section.
 # The UI layout in screens references only logical binding keys.
+
+# -- Home Assistant connection --
+# The token is read from the environment variable specified by token_env.
+# Set it in your .env file or systemd EnvironmentFile.
+homeassistant:
+  url: "http://homeassistant.local:8123"
+  token_env: "DECKBOARD_HA_TOKEN"
+  reconnect_delay_seconds: 5
 
 # -- Device settings --
 device:

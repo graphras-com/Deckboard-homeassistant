@@ -1,12 +1,12 @@
 [project]
 name = "deckboard-homeassistant"
-version = "0.1.0"
-description = "Home Assistant integration for the Deckboard Stream Deck UI library"
+version = "0.2.0"
+description = "Standalone Home Assistant integration for the Deckboard Stream Deck UI library"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "deckboard",
-    "hassapi>=0.3.0",
+    "aiohttp>=3.9",
     "pyyaml>=6.0",
 ]
 
@@ -15,6 +15,9 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
+
+[project.scripts]
+deckboard-ha = "main:main"
 
 [tool.uv.sources]
 deckboard = { git = "https://github.com/graphras-com/Deckboard", rev = "v0.0.1" }

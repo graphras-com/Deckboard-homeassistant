@@ -1,137 +1,199 @@
-"""Standalone entry point for testing without AppDaemon.
+"""Standalone entry point for the Deckboard Home Assistant service.
 
-This demonstrates the controller wiring with a mock bridge.
-For production use, deploy via AppDaemon (see examples/apps.yaml).
+Runs as an asyncio daemon on a Raspberry Pi (or any Linux host) with a
+Stream Deck connected via USB.  Connects to Home Assistant over the network
+using the WebSocket API.
+
+Usage:
+    python main.py [config_path]
+    python -m deckboard_homeassistant [config_path]
+
+Environment variables:
+    DECKBOARD_HA_TOKEN  -- HA long-lived access token (preferred over YAML).
+    DECKBOARD_CONFIG    -- Config file path (default: deckboard.yaml).
+    DECKBOARD_LOG_LEVEL -- Logging level (default: INFO).
+
+Suitable for running under systemd.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import signal
 import sys
 from pathlib import Path
-from typing import Any
 
 from deckboard import Deck
 
 from deckboard_homeassistant.bindings import BindingManager
+from deckboard_homeassistant.bridge import HomeAssistantBridge
+from deckboard_homeassistant.client import HomeAssistantClient
 from deckboard_homeassistant.config import load_config
 from deckboard_homeassistant.controller import DeckboardController
-from deckboard_homeassistant.interfaces import (
-    Action,
-    CommandBus,
-    StateCallback,
-    StateProvider,
-)
 
-logging.basicConfig(level=logging.INFO, format="%(name)s %(levelname)s %(message)s")
-log = logging.getLogger(__name__)
+log = logging.getLogger("deckboard_homeassistant")
 
 
-class MockBridge(StateProvider, CommandBus):
-    """In-memory mock for testing without Home Assistant."""
+async def run(config_path: str) -> None:
+    """Main application lifecycle."""
+    # ------------------------------------------------------------------
+    # 1. Load configuration.
+    # ------------------------------------------------------------------
+    config = load_config(config_path)
+    ha = config.homeassistant
 
-    def __init__(self) -> None:
-        self._state: dict[str, dict[str, Any]] = {}
-        self._cache: dict[str, dict[str, Any]] = {}
-        self._subscribers: dict[str, list[StateCallback]] = {}
-
-    def set_entity_state(self, entity_id: str, attrs: dict[str, Any]) -> None:
-        """Inject mock entity state."""
-        self._cache[entity_id] = dict(attrs)
-
-    async def get_value(self, key: str) -> Any:
-        entity_id, attribute = self._parse_key(key)
-        cached = self._cache.get(entity_id, {})
-        return cached.get(attribute)
-
-    def subscribe(self, key: str, callback: StateCallback) -> None:
-        self._subscribers.setdefault(key, []).append(callback)
-
-    def unsubscribe(self, key: str, callback: StateCallback) -> None:
-        cbs = self._subscribers.get(key, [])
-        try:
-            cbs.remove(callback)
-        except ValueError:
-            pass
-
-    async def execute(self, binding_key: str, action: Action) -> None:
-        log.info("MOCK EXECUTE: %s -> %s %s", binding_key, action.name, action.args)
-
-    @staticmethod
-    def _parse_key(key: str) -> tuple[str, str]:
-        parts = key.split(".")
-        if len(parts) <= 2:
-            return key, "state"
-        return f"{parts[0]}.{parts[1]}", ".".join(parts[2:])
-
-
-async def main() -> None:
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "examples/deckboard.yaml"
-
-    if not Path(config_path).exists():
-        log.error("Config file not found: %s", config_path)
+    if not ha.token:
+        log.error(
+            "No HA access token configured. Set DECKBOARD_HA_TOKEN or "
+            "configure homeassistant.token_env in %s",
+            config_path,
+        )
         sys.exit(1)
 
-    config = load_config(config_path)
     log.info(
-        "Loaded %d bindings, %d screens", len(config.bindings), len(config.screens)
+        "Config loaded: %d bindings, %d screens, HA @ %s",
+        len(config.bindings),
+        len(config.screens),
+        ha.url,
     )
 
+    # ------------------------------------------------------------------
+    # 2. Create the HA WebSocket client.
+    # ------------------------------------------------------------------
+    client = HomeAssistantClient(
+        url=ha.url,
+        token=ha.token,
+        reconnect_delay=ha.reconnect_delay,
+    )
+
+    # ------------------------------------------------------------------
+    # 3. Create the bridge (StateProvider + CommandBus).
+    # ------------------------------------------------------------------
+    bridge = HomeAssistantBridge(client)
+
+    # ------------------------------------------------------------------
+    # 4. Create the binding manager.
+    # ------------------------------------------------------------------
+    binding_manager = BindingManager(bridge, bridge)
+
+    # ------------------------------------------------------------------
+    # 5. Open the Stream Deck device.
+    # ------------------------------------------------------------------
+    shutdown_event = asyncio.Event()
+
+    # Wire OS signals for graceful shutdown.
     loop = asyncio.get_running_loop()
-
-    # Create mock bridge with sample state.
-    bridge = MockBridge()
-    bridge.set_entity_state(
-        "light.kitchen",
-        {
-            "state": "on",
-            "brightness": 200,
-            "color_temp_kelvin": 3500,
-            "color_mode": "color_temp",
-        },
-    )
-    bridge.set_entity_state(
-        "light.living_room",
-        {
-            "state": "off",
-            "brightness": 0,
-            "color_temp_kelvin": 4000,
-            "color_mode": "color_temp",
-        },
-    )
-    bridge.set_entity_state(
-        "media_player.living_room",
-        {
-            "state": "playing",
-            "volume_level": 0.65,
-            "is_volume_muted": False,
-            "media_title": "Bohemian Rhapsody",
-            "media_artist": "Queen",
-        },
-    )
-    bridge.set_entity_state(
-        "media_player.bedroom_speaker",
-        {
-            "state": "idle",
-            "volume_level": 0.40,
-            "is_volume_muted": False,
-            "media_title": "",
-        },
-    )
-
-    binding_manager = BindingManager(bridge, bridge, loop)
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, shutdown_event.set)
 
     async with Deck(
         device_type=config.device_type,
         device_index=config.device_index,
         brightness=config.brightness,
     ) as deck:
-        controller = DeckboardController(deck, binding_manager, config, loop)
+        # ------------------------------------------------------------------
+        # 6. Build the controller and wire UI.
+        # ------------------------------------------------------------------
+        controller = DeckboardController(deck, binding_manager, config)
         await controller.setup()
-        log.info("Ready. Press Ctrl+C to exit.")
-        await deck.wait_closed()
+
+        # ------------------------------------------------------------------
+        # 7. Connect to HA and start the event loop.
+        # ------------------------------------------------------------------
+        async def _on_connected() -> None:
+            """Called after each (re)connect to HA."""
+            await bridge.load_initial_states()
+            await binding_manager.refresh_all()
+            await deck.refresh()
+            log.info("UI synchronized with Home Assistant")
+
+        async def _connection_lifecycle() -> None:
+            """Manage the HA connection with automatic reconnect."""
+            while not shutdown_event.is_set():
+                try:
+                    await client.connect()
+                    await _on_connected()
+
+                    # Run until disconnected or shutdown.
+                    if client._receiver_task:
+                        done, _ = await asyncio.wait(
+                            [
+                                client._receiver_task,
+                                asyncio.create_task(shutdown_event.wait()),
+                            ],
+                            return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        # If shutdown was triggered, break out.
+                        if shutdown_event.is_set():
+                            break
+                except (
+                    ConnectionError,
+                    OSError,
+                    asyncio.TimeoutError,
+                ) as exc:
+                    log.warning("HA connection failed: %s", exc)
+                except Exception:
+                    log.exception("Unexpected error in HA connection")
+
+                if not shutdown_event.is_set():
+                    log.info("Reconnecting in %.0fs...", ha.reconnect_delay)
+                    try:
+                        await asyncio.wait_for(
+                            shutdown_event.wait(), timeout=ha.reconnect_delay
+                        )
+                    except asyncio.TimeoutError:
+                        pass  # Timeout means we should reconnect.
+                    if shutdown_event.is_set():
+                        break
+
+        # Run the connection lifecycle alongside the deck.
+        connection_task = asyncio.create_task(
+            _connection_lifecycle(), name="ha-connection"
+        )
+
+        log.info("Deckboard HA service running. Waiting for shutdown signal.")
+
+        # Wait for shutdown signal.
+        await shutdown_event.wait()
+
+        log.info("Shutting down...")
+
+        # Cancel the connection lifecycle.
+        connection_task.cancel()
+        try:
+            await connection_task
+        except asyncio.CancelledError:
+            pass
+
+        # Disconnect from HA.
+        await client.disconnect()
+
+    log.info("Deck closed. Goodbye.")
+
+
+def main() -> None:
+    """CLI entrypoint."""
+    log_level = os.environ.get("DECKBOARD_LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format="%(asctime)s %(name)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    config_path = (
+        sys.argv[1]
+        if len(sys.argv) > 1
+        else os.environ.get("DECKBOARD_CONFIG", "deckboard.yaml")
+    )
+
+    if not Path(config_path).exists():
+        log.error("Config file not found: %s", config_path)
+        sys.exit(1)
+
+    asyncio.run(run(config_path))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

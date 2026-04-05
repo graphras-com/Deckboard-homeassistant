@@ -2,16 +2,18 @@
 
 Each adapter translates between HA's raw entity state/services and clean,
 UI-friendly values and action names.  The adapter registry maps domain names
-(e.g. ``"light"``, ``"media_player"``) to adapter instances.
+(e.g. ``"light"``, ``"media_player"``, ``"climate"``) to adapter instances.
 """
 
 from deckboard_homeassistant.adapters.base import DomainAdapter
+from deckboard_homeassistant.adapters.climate import ClimateAdapter
 from deckboard_homeassistant.adapters.light import LightAdapter
 from deckboard_homeassistant.adapters.media_player import MediaPlayerAdapter
 
 _REGISTRY: dict[str, type[DomainAdapter]] = {
     "light": LightAdapter,
     "media_player": MediaPlayerAdapter,
+    "climate": ClimateAdapter,
 }
 
 
@@ -30,6 +32,7 @@ def register_adapter(domain: str, adapter_cls: type[DomainAdapter]) -> None:
 
 
 __all__ = [
+    "ClimateAdapter",
     "DomainAdapter",
     "LightAdapter",
     "MediaPlayerAdapter",

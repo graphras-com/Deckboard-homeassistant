@@ -1,19 +1,17 @@
 """Controller -- orchestrates config, bindings, and Deckboard UI.
 
 The controller is the top-level coordinator.  It:
-  1. Loads configuration.
-  2. Registers bindings in the BindingManager.
-  3. Creates Deckboard Screen / Key / Card objects from config.
-  4. Wires state subscriptions so HA changes update the UI.
-  5. Wires UI event callbacks so user input dispatches HA actions.
+  1. Registers bindings in the BindingManager.
+  2. Creates Deckboard Screen / Key / Card objects from config.
+  3. Wires state subscriptions so HA changes update the UI.
+  4. Wires UI event callbacks so user input dispatches HA actions.
 
-It does NOT import ``hassapi`` -- it works through the abstract
-:class:`StateProvider` and :class:`CommandBus` interfaces.
+It does NOT import the HA client or bridge -- it works through the abstract
+:class:`StateProvider` and :class:`CommandBus` interfaces via BindingManager.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 
@@ -45,7 +43,6 @@ class DeckboardController:
         deck: The Deckboard Deck instance.
         binding_manager: Manages entity bindings.
         config: Parsed configuration.
-        loop: Event loop for scheduling.
     """
 
     def __init__(
@@ -53,12 +50,10 @@ class DeckboardController:
         deck: Deck,
         binding_manager: BindingManager,
         config: DeckConfig,
-        loop: asyncio.AbstractEventLoop,
     ) -> None:
         self._deck = deck
         self._bindings = binding_manager
         self._config = config
-        self._loop = loop
 
     async def setup(self) -> None:
         """Build all screens, keys, cards, and wire bindings."""
@@ -175,9 +170,6 @@ class DeckboardController:
             async def _turn(
                 direction: int, *, _action_cfg: ActionConfig = action_cfg
             ) -> None:
-                # Determine action name based on direction.
-                # Convention: the configured action is the "up" variant;
-                # we derive the "down" variant by replacing _up with _down.
                 action_name = _action_cfg.action
                 if direction < 0 and "_up" in action_name:
                     action_name = action_name.replace("_up", "_down")
@@ -217,7 +209,7 @@ class DeckboardController:
 
     async def _build_status_card(self, screen: Any, cfg: CardConfig) -> None:
         """Build a StatusCard (icon + label + value)."""
-        card = screen.card(cfg.index)  # Default StatusCard.
+        card = screen.card(cfg.index)
 
         if cfg.icon:
             card.set_icon(cfg.icon)
