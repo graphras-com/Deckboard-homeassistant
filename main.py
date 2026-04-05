@@ -173,19 +173,50 @@ async def run(config_path: str) -> None:
     log.info("Deck closed. Goodbye.")
 
 
+def _load_env_file(config_path: str) -> None:
+    """Load a .env file into os.environ if it exists.
+
+    Searches for ``.env`` in the same directory as the config file,
+    then falls back to the current working directory.  Only sets
+    variables that are not already defined in the environment (so real
+    env vars always win).
+    """
+    candidates = [
+        Path(config_path).parent / ".env",
+        Path.cwd() / ".env",
+    ]
+    for env_path in candidates:
+        if env_path.is_file():
+            with env_path.open() as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    value = value.strip().strip("\"'")
+                    if key and key not in os.environ:
+                        os.environ[key] = value
+            log.debug("Loaded env file: %s", env_path)
+            return  # Only load the first one found.
+
+
 def main() -> None:
     """CLI entrypoint."""
+    config_path = (
+        sys.argv[1]
+        if len(sys.argv) > 1
+        else os.environ.get("DECKBOARD_CONFIG", "deckboard.yaml")
+    )
+
+    # Load .env before reading log level or config (token may be in .env).
+    _load_env_file(config_path)
+
     log_level = os.environ.get("DECKBOARD_LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
         level=getattr(logging, log_level, logging.INFO),
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    config_path = (
-        sys.argv[1]
-        if len(sys.argv) > 1
-        else os.environ.get("DECKBOARD_CONFIG", "deckboard.yaml")
     )
 
     if not Path(config_path).exists():
