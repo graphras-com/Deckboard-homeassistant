@@ -4,10 +4,12 @@ Normalizes HA light entity state into clean values and resolves light
 actions into HA service calls.
 
 Normalized keys:
-    is_on          bool     Whether the light is on.
-    brightness_pct int      Brightness as 0-100 percentage (HA uses 0-255).
-    kelvin         int      Color temperature in Kelvin.
-    color_name     str      Friendly name of the current color mode.
+    is_on              bool     Whether the light is on.
+    brightness_pct     int      Brightness as 0-100 percentage (HA uses 0-255).
+    kelvin             int      Color temperature in Kelvin.
+    kelvin_min         int      Minimum supported Kelvin (from HA).
+    kelvin_max         int      Maximum supported Kelvin (from HA).
+    color_name         str      Friendly name of the current color mode.
 
 Supported actions:
     toggle           Toggle the light on/off.
@@ -57,10 +59,24 @@ class LightAdapter(DomainAdapter):
         except (TypeError, ValueError):
             kelvin = 4000
 
+        # Kelvin range from HA attributes.
+        kelvin_min = state.get("min_color_temp_kelvin")
+        kelvin_max = state.get("max_color_temp_kelvin")
+        try:
+            kelvin_min = int(kelvin_min) if kelvin_min is not None else 2000
+        except (TypeError, ValueError):
+            kelvin_min = 2000
+        try:
+            kelvin_max = int(kelvin_max) if kelvin_max is not None else 6500
+        except (TypeError, ValueError):
+            kelvin_max = 6500
+
         return {
             "is_on": is_on,
             "brightness_pct": brightness_pct if is_on else 0,
             "kelvin": kelvin,
+            "kelvin_min": kelvin_min,
+            "kelvin_max": kelvin_max,
             "color_name": color_mode,
         }
 

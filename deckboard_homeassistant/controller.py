@@ -21,6 +21,7 @@ from PIL import Image
 
 from deckboard import (
     Deck,
+    EqualizerCard,
     HaMediaCard,
     LightCard,
     MediaCard,
@@ -216,6 +217,8 @@ class DeckboardController:
                 await self._build_media_card(screen, cfg)
             case "ha_media":
                 await self._build_ha_media_card(screen, cfg)
+            case "equalizer":
+                await self._build_equalizer_card(screen, cfg)
             case "status" | _:
                 await self._build_status_card(screen, cfg)
 
@@ -277,8 +280,18 @@ class DeckboardController:
                 light_card.kelvin.set_value(int(value))
                 await deck.refresh()
 
+        async def _on_kelvin_min(attr: str, value: Any) -> None:
+            if isinstance(value, (int, float)):
+                light_card.set_kelvin_range(float(value), light_card.kelvin.max_value)
+
+        async def _on_kelvin_max(attr: str, value: Any) -> None:
+            if isinstance(value, (int, float)):
+                light_card.set_kelvin_range(light_card.kelvin.min_value, float(value))
+
         binding_obj.subscribe("brightness_pct", _on_brightness)
         binding_obj.subscribe("kelvin", _on_kelvin)
+        binding_obj.subscribe("kelvin_min", _on_kelvin_min)
+        binding_obj.subscribe("kelvin_max", _on_kelvin_max)
 
         # UI -> HA: slider change callbacks.
         @light_card.brightness.on_change
@@ -350,6 +363,84 @@ class DeckboardController:
         async def _tap() -> None:
             await bindings.execute_action(binding_key, "play_pause")
             await deck.refresh()
+
+    async def _build_equalizer_card(self, screen: Any, cfg: CardConfig) -> None:
+        """Build an EqualizerCard (sub, bass, treble, balance sliders).
+
+        Expects the binding to be a multi-entity equalizer adapter with
+        slots named ``sub``, ``bass``, ``treble``, and ``balance``.
+        """
+        eq_card = EqualizerCard(cfg.index)
+        screen.set_card(cfg.index, eq_card)
+
+        binding_obj = self._bindings.get(cfg.binding)
+        if binding_obj is None:
+            log.warning("Card %d: binding %r not found", cfg.index, cfg.binding)
+            return
+
+        deck = self._deck
+        bindings = self._bindings
+        binding_key = cfg.binding
+
+        # Map slot names to card-level accessors.
+        sliders = {
+            "sub": eq_card.sub,
+            "bass": eq_card.bass,
+            "treble": eq_card.treble,
+            "balance": eq_card.balance,
+        }
+        range_setters = {
+            "sub": eq_card.set_sub_range,
+            "bass": eq_card.set_bass_range,
+            "treble": eq_card.set_treble_range,
+            "balance": eq_card.set_balance_range,
+        }
+
+        # State -> UI: wire value and range updates per slot.
+        for slot_name, slider in sliders.items():
+            setter = range_setters[slot_name]
+
+            async def _on_value(
+                attr: str, value: Any, *, _slider: Any = slider
+            ) -> None:
+                if isinstance(value, (int, float)):
+                    _slider.set_value(float(value))
+                    await deck.refresh()
+
+            async def _on_min(
+                attr: str,
+                value: Any,
+                *,
+                _slider: Any = slider,
+                _set_range: Any = setter,
+            ) -> None:
+                if isinstance(value, (int, float)):
+                    _set_range(float(value), _slider.max_value)
+
+            async def _on_max(
+                attr: str,
+                value: Any,
+                *,
+                _slider: Any = slider,
+                _set_range: Any = setter,
+            ) -> None:
+                if isinstance(value, (int, float)):
+                    _set_range(_slider.min_value, float(value))
+
+            binding_obj.subscribe(slot_name, _on_value)
+            binding_obj.subscribe(f"{slot_name}_min", _on_min)
+            binding_obj.subscribe(f"{slot_name}_max", _on_max)
+
+        # UI -> HA: slider change callbacks.
+        for slot_name, slider in sliders.items():
+
+            @slider.on_change
+            async def _slider_changed(value: float, *, _slot: str = slot_name) -> None:
+                await bindings.execute_action(
+                    binding_key,
+                    f"set_{_slot}",
+                    {"value": value},
+                )
 
     async def _build_ha_media_card(self, screen: Any, cfg: CardConfig) -> None:
         """Build an HaMediaCard (album art + metadata + volume bar).

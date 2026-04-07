@@ -280,7 +280,7 @@ wheels = [
 [[package]]
 name = "deckboard"
 version = "0.1.0"
-source = { git = "https://github.com/graphras-com/Deckboard#66dd6095959c3d6a6d74d10aa1686f4169fbce06" }
+source = { git = "https://github.com/graphras-com/Deckboard#09b8a19bcb1e8de10f766aff9581a7f9008416ea" }
 dependencies = [
     { name = "cairosvg" },
     { name = "httpx" },

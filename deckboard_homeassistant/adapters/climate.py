@@ -8,6 +8,8 @@ Normalized keys:
     hvac_mode           str     Current HVAC mode (heat, cool, auto, off, etc.).
     current_temperature float   Current measured temperature.
     target_temperature  float   Target temperature setpoint.
+    target_temp_min     float   Minimum target temperature (from HA).
+    target_temp_max     float   Maximum target temperature (from HA).
     fan_mode            str     Current fan mode (auto, low, medium, high, etc.).
     humidity            float   Current humidity (if available).
 
@@ -52,6 +54,19 @@ class ClimateAdapter(DomainAdapter):
         except (TypeError, ValueError):
             target_temp = 0.0
 
+        # Temperature range from HA attributes.
+        temp_min = state.get("min_temp")
+        try:
+            temp_min = float(temp_min) if temp_min is not None else 7.0
+        except (TypeError, ValueError):
+            temp_min = 7.0
+
+        temp_max = state.get("max_temp")
+        try:
+            temp_max = float(temp_max) if temp_max is not None else 35.0
+        except (TypeError, ValueError):
+            temp_max = 35.0
+
         humidity = state.get("current_humidity")
         try:
             humidity = float(humidity) if humidity is not None else 0.0
@@ -63,6 +78,8 @@ class ClimateAdapter(DomainAdapter):
             "hvac_mode": raw_state,
             "current_temperature": current_temp,
             "target_temperature": target_temp,
+            "target_temp_min": temp_min,
+            "target_temp_max": temp_max,
             "fan_mode": state.get("fan_mode", ""),
             "humidity": humidity,
         }

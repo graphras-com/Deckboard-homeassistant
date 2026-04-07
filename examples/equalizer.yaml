@@ -2,6 +2,9 @@
 #
 # Groups multiple HA number entities under a single multi-entity binding.
 # Each entity becomes a named slot the adapter can normalize and control.
+#
+# Slot names must be: sub, bass, treble, balance -- matching the
+# EqualizerCard's four sliders.
 
 homeassistant:
   url: "http://homeassistant.local:8123"
@@ -11,10 +14,14 @@ device:
   type: "Stream Deck +"
 
 bindings:
+  media.entertainment:
+    entity: media_player.entertainment
+    adapter: media_player
+
   audio.entertainment:
     adapter: equalizer
     entities:
-      sub_gain: number.entertainment_sub_gain
+      sub: number.entertainment_sub_gain
       treble: number.entertainment_treble
       bass: number.entertainment_bass
       balance: number.entertainment_balance
@@ -23,5 +30,8 @@ screens:
   home:
     cards:
       0:
+        type: ha_media
+        binding: media.entertainment
+      1:
         type: equalizer
         binding: audio.entertainment

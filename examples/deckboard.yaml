@@ -32,7 +32,7 @@ bindings:
   audio.entertainment:
     adapter: equalizer
     entities:
-      sub_gain: number.entertainment_sub_gain
+      sub: number.entertainment_sub_gain
       treble: number.entertainment_treble
       bass: number.entertainment_bass
       balance: number.entertainment_balance

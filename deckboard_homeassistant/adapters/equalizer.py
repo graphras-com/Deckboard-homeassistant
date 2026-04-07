@@ -5,8 +5,10 @@ balance) into a single adapter that exposes each slot as a normalized
 attribute and can dispatch ``set_<slot>`` / ``<slot>_up`` / ``<slot>_down``
 actions to the correct entity.
 
-Normalized keys (one per slot):
-    <slot>       float   Current value of that slot's entity.
+Normalized keys (per slot):
+    <slot>           float   Current value of that slot's entity.
+    <slot>_min       float   Minimum value (from HA ``min`` attribute).
+    <slot>_max       float   Maximum value (from HA ``max`` attribute).
 
 Supported actions:
     set_<slot>       Set a slot to a specific value (``value`` arg).
@@ -19,7 +21,7 @@ Example config::
       audio.entertainment:
         adapter: equalizer
         entities:
-          sub_gain: number.entertainment_sub_gain
+          sub:      number.entertainment_sub_gain
           treble:   number.entertainment_treble
           bass:     number.entertainment_bass
           balance:  number.entertainment_balance
@@ -56,10 +58,12 @@ class EqualizerAdapter(MultiEntityAdapter):
         state: dict[str, Any],
         all_states: dict[str, dict[str, Any]],
     ) -> dict[str, Any]:
-        """Return all slot values, keyed by slot name."""
+        """Return value, min, and max for every slot."""
         result: dict[str, Any] = {}
         for s, s_state in all_states.items():
             result[s] = _parse_number(s_state.get("state"))
+            result[f"{s}_min"] = _parse_number(s_state.get("min"), 0.0)
+            result[f"{s}_max"] = _parse_number(s_state.get("max"), 100.0)
         return result
 
     def resolve_action_multi(
