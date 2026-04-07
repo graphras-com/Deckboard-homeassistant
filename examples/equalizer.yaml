@@ -1,0 +1,27 @@
+# Minimal equalizer example
+#
+# Groups multiple HA number entities under a single multi-entity binding.
+# Each entity becomes a named slot the adapter can normalize and control.
+
+homeassistant:
+  url: "http://homeassistant.local:8123"
+  token_env: "DECKBOARD_HA_TOKEN"
+
+device:
+  type: "Stream Deck +"
+
+bindings:
+  audio.entertainment:
+    adapter: equalizer
+    entities:
+      sub_gain: number.entertainment_sub_gain
+      treble: number.entertainment_treble
+      bass: number.entertainment_bass
+      balance: number.entertainment_balance
+
+screens:
+  home:
+    cards:
+      0:
+        type: equalizer
+        binding: audio.entertainment

@@ -28,6 +28,15 @@ bindings:
     entity: media_player.entertainment
     adapter: media_player
 
+  # Multi-entity binding: group several number entities under one adapter.
+  audio.entertainment:
+    adapter: equalizer
+    entities:
+      sub_gain: number.entertainment_sub_gain
+      treble: number.entertainment_treble
+      bass: number.entertainment_bass
+      balance: number.entertainment_balance
+
 # -- Screens --
 screens:
   home:

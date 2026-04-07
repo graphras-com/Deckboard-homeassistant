@@ -106,11 +106,19 @@ class ScreenConfig:
 
 @dataclass(frozen=True, slots=True)
 class BindingConfig:
-    """Configuration for a single binding."""
+    """Configuration for a single binding.
+
+    A binding maps a logical name to one or more HA entities through an
+    adapter.  For simple single-entity adapters, ``entity_id`` is set and
+    ``entities`` is empty.  For multi-entity adapters (e.g. equalizer),
+    ``entities`` holds a ``{slot_name: entity_id}`` mapping and
+    ``entity_id`` is left empty.
+    """
 
     key: str
     entity_id: str
     adapter: str
+    entities: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,10 +247,13 @@ def _parse_screen(name: str, raw: dict[str, Any]) -> ScreenConfig:
 
 
 def _parse_binding(key: str, raw: dict[str, Any]) -> BindingConfig:
+    entities_raw = raw.get("entities", {})
+    entities = {str(k): str(v) for k, v in entities_raw.items()} if entities_raw else {}
     return BindingConfig(
         key=key,
         entity_id=raw.get("entity", ""),
         adapter=raw.get("adapter", ""),
+        entities=entities,
     )
 
 

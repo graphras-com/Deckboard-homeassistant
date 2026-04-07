@@ -64,7 +64,12 @@ class DeckboardController:
         """Build all screens, keys, cards, and wire bindings."""
         # Register all bindings from config.
         for b in self._config.bindings:
-            self._bindings.register(b.key, b.entity_id, b.adapter)
+            self._bindings.register(
+                b.key,
+                b.entity_id,
+                b.adapter,
+                entities=b.entities or None,
+            )
 
         # Build each screen.
         for screen_cfg in self._config.screens:
