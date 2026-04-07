@@ -84,7 +84,7 @@ class CardConfig:
     """Configuration for a single touchscreen card zone."""
 
     index: int
-    type: str = "status"  # "status", "light", "media", "equalizer"
+    type: str = "status"  # "status", "light", "media", "ha_media", "equalizer"
     binding: str = ""
     icon: str = ""
     label: str = ""

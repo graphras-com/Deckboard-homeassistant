@@ -126,7 +126,15 @@ class HomeAssistantBridge(StateProvider, CommandBus):
     # ------------------------------------------------------------------
 
     async def execute(self, binding_key: str, action: Action) -> None:
-        """Execute *action* by calling the appropriate HA service."""
+        """Execute *action* by calling the appropriate HA service.
+
+        Best-effort: logs and swallows errors so a failed service call
+        never crashes the UI event loop.
+        """
+        if not self._client.connected:
+            log.warning("Cannot execute %s -- not connected to HA", action.name)
+            return
+
         entity_id: str | None = action.args.get("entity_id")
         domain: str | None = action.args.get("domain")
 
@@ -149,6 +157,10 @@ class HomeAssistantBridge(StateProvider, CommandBus):
             await self._client.call_service(
                 domain, service, service_data=service_data, target=target
             )
+        except asyncio.TimeoutError:
+            log.warning("Service call %s/%s timed out", domain, service)
+        except ConnectionError:
+            log.warning("Service call %s/%s failed -- not connected", domain, service)
         except Exception:
             log.exception("Failed to call service %s/%s", domain, service)
 

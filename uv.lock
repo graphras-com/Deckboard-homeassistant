@@ -280,7 +280,7 @@ wheels = [
 [[package]]
 name = "deckboard"
 version = "0.1.0"
-source = { git = "https://github.com/graphras-com/Deckboard?rev=v0.0.1#c4195cd2cb61c73e496bd7b737c4512b1ff7051e" }
+source = { git = "https://github.com/graphras-com/Deckboard#f3d68e3b9be6f96dd9ce3016653aef12baa6155c" }
 dependencies = [
     { name = "cairosvg" },
     { name = "httpx" },
@@ -295,6 +295,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "deckboard" },
+    { name = "pillow" },
     { name = "pyyaml" },
 ]
 
@@ -307,7 +308,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.9" },
-    { name = "deckboard", git = "https://github.com/graphras-com/Deckboard?rev=v0.0.1" },
+    { name = "deckboard", git = "https://github.com/graphras-com/Deckboard" },
+    { name = "pillow", specifier = ">=10.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pyyaml", specifier = ">=6.0" },

@@ -12,11 +12,16 @@ It does NOT import the HA client or bridge -- it works through the abstract
 
 from __future__ import annotations
 
+import io
 import logging
 from typing import Any
 
+import aiohttp
+from PIL import Image
+
 from deckboard import (
     Deck,
+    HaMediaCard,
     LightCard,
     MediaCard,
     StatusCard,
@@ -204,6 +209,8 @@ class DeckboardController:
                 await self._build_light_card(screen, cfg)
             case "media":
                 await self._build_media_card(screen, cfg)
+            case "ha_media":
+                await self._build_ha_media_card(screen, cfg)
             case "status" | _:
                 await self._build_status_card(screen, cfg)
 
@@ -335,6 +342,124 @@ class DeckboardController:
 
         # Tap toggles play/pause.
         @media_card.on_tap
+        async def _tap() -> None:
+            await bindings.execute_action(binding_key, "play_pause")
+            await deck.refresh()
+
+    async def _build_ha_media_card(self, screen: Any, cfg: CardConfig) -> None:
+        """Build an HaMediaCard (album art + metadata + volume bar).
+
+        The HaMediaCard renders album art with a gradient overlay, artist
+        name, title, playback state, and a volume bar.  The card emits
+        pure events via callbacks; it does not modify its own state
+        directly.  The controller dispatches actions to HA and applies
+        confirmed state back to the card via setters.
+        """
+        ha_card = HaMediaCard(cfg.index)
+        screen.set_card(cfg.index, ha_card)
+
+        binding_obj = self._bindings.get(cfg.binding)
+        if binding_obj is None:
+            log.warning("Card %d: binding %r not found", cfg.index, cfg.binding)
+            return
+
+        deck = self._deck
+        bindings = self._bindings
+        binding_key = cfg.binding
+        ha_base_url = self._config.homeassistant.url.rstrip("/")
+        ha_token = self._config.homeassistant.token
+
+        # Track the last fetched picture URL to avoid redundant fetches.
+        last_picture_url: dict[str, str] = {"url": ""}
+
+        # ── State -> UI (HA pushes confirmed state to the card) ───────
+
+        async def _on_artist(attr: str, value: Any) -> None:
+            ha_card.set_artist(str(value) if value else "")
+            await deck.refresh()
+
+        async def _on_title(attr: str, value: Any) -> None:
+            ha_card.set_title(str(value) if value else "No Media")
+            await deck.refresh()
+
+        async def _on_playing(attr: str, value: Any) -> None:
+            if isinstance(value, bool):
+                ha_card.set_state("Playing" if value else "Paused")
+                await deck.refresh()
+
+        async def _on_volume(attr: str, value: Any) -> None:
+            if isinstance(value, (int, float)):
+                ha_card.set_volume(float(value))
+                await deck.refresh()
+
+        async def _on_muted(attr: str, value: Any) -> None:
+            if isinstance(value, bool) and value != ha_card.muted:
+                ha_card.set_muted(value)
+                await deck.refresh()
+
+        async def _on_entity_picture(attr: str, value: Any) -> None:
+            url = str(value) if value else ""
+            if not url or url == last_picture_url["url"]:
+                if not url and ha_card.entity_picture is not None:
+                    ha_card.set_entity_picture(None)
+                    await deck.refresh()
+                return
+            last_picture_url["url"] = url
+            image = await _fetch_entity_picture(url)
+            ha_card.set_entity_picture(image)
+            await deck.refresh()
+
+        async def _fetch_entity_picture(path: str) -> Image.Image | None:
+            """Fetch album art from HA and return as a PIL Image."""
+            full_url = f"{ha_base_url}{path}"
+            headers = {"Authorization": f"Bearer {ha_token}"}
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        full_url,
+                        headers=headers,
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ) as resp:
+                        if resp.status != 200:
+                            log.warning(
+                                "Failed to fetch entity picture: HTTP %d", resp.status
+                            )
+                            return None
+                        data = await resp.read()
+                        return Image.open(io.BytesIO(data))
+            except Exception:
+                log.exception("Error fetching entity picture from %s", full_url)
+                return None
+
+        binding_obj.subscribe("artist", _on_artist)
+        binding_obj.subscribe("title", _on_title)
+        binding_obj.subscribe("is_playing", _on_playing)
+        binding_obj.subscribe("volume_pct", _on_volume)
+        binding_obj.subscribe("is_muted", _on_muted)
+        binding_obj.subscribe("entity_picture", _on_entity_picture)
+
+        # ── UI -> HA (card emits requests, controller dispatches) ─────
+
+        @ha_card.on_volume_change
+        async def _volume_changed(volume: float) -> None:
+            await bindings.execute_action(
+                binding_key,
+                "set_volume",
+                {"volume": int(volume)},
+            )
+
+        @ha_card.on_mute_toggle
+        async def _mute_toggled(muted: bool) -> None:
+            await bindings.execute_action(binding_key, "mute_toggle")
+            await deck.refresh()
+
+        @ha_card.on_play_pause_toggle
+        async def _play_pause_toggled(playing: bool) -> None:
+            await bindings.execute_action(binding_key, "play_pause")
+            await deck.refresh()
+
+        # Tap toggles play/pause.
+        @ha_card.on_tap
         async def _tap() -> None:
             await bindings.execute_action(binding_key, "play_pause")
             await deck.refresh()

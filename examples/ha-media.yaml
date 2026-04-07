@@ -1,0 +1,23 @@
+# Minimal ha_media card example
+#
+# Shows album art, artist, title, playback state, and a volume bar.
+# Encoder: turn = volume, short press = mute, long press = play/pause.
+
+homeassistant:
+  url: "http://homeassistant.local:8123"
+  token_env: "DECKBOARD_HA_TOKEN"
+
+device:
+  type: "Stream Deck +"
+
+bindings:
+  media.study:
+    entity: media_player.study
+    adapter: media_player
+
+screens:
+  home:
+    cards:
+      0:
+        type: ha_media
+        binding: media.study

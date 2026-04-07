@@ -94,16 +94,17 @@ async def run(config_path: str) -> None:
         brightness=config.brightness,
     ) as deck:
         # ------------------------------------------------------------------
-        # 6. Build the controller and wire UI.
+        # 6. Build the controller and wire UI (no HA connection needed yet).
         # ------------------------------------------------------------------
         controller = DeckboardController(deck, binding_manager, config)
         await controller.setup()
 
         # ------------------------------------------------------------------
-        # 7. Connect to HA and start the event loop.
+        # 7. Connect to HA in the background with reconnect support.
         # ------------------------------------------------------------------
         async def _on_connected() -> None:
             """Called after each (re)connect to HA."""
+            log.info("Connected to Home Assistant, loading state...")
             await bridge.load_initial_states()
             await binding_manager.refresh_all()
             await deck.refresh()
@@ -116,59 +117,85 @@ async def run(config_path: str) -> None:
                     await client.connect()
                     await _on_connected()
 
-                    # Run until disconnected or shutdown.
-                    if client._receiver_task:
-                        done, _ = await asyncio.wait(
-                            [
-                                client._receiver_task,
-                                asyncio.create_task(shutdown_event.wait()),
-                            ],
-                            return_when=asyncio.FIRST_COMPLETED,
+                    # Block until the receiver task finishes (disconnect)
+                    # or we're told to shut down.
+                    receiver = client._receiver_task
+                    if receiver:
+                        # Wait for either the receiver to end or shutdown.
+                        shutdown_task = asyncio.create_task(
+                            shutdown_event.wait(), name="shutdown-wait"
                         )
-                        # If shutdown was triggered, break out.
+                        try:
+                            done, pending = await asyncio.wait(
+                                [receiver, shutdown_task],
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                        finally:
+                            # Always clean up the shutdown waiter.
+                            shutdown_task.cancel()
+                            try:
+                                await shutdown_task
+                            except asyncio.CancelledError:
+                                pass
+
                         if shutdown_event.is_set():
                             break
+
+                        # Receiver ended -- connection dropped.
+                        log.warning("HA WebSocket connection closed")
+
+                except asyncio.CancelledError:
+                    break
                 except (
                     ConnectionError,
                     OSError,
                     asyncio.TimeoutError,
                 ) as exc:
-                    log.warning("HA connection failed: %s", exc)
-                except Exception:
-                    log.exception("Unexpected error in HA connection")
-
-                if not shutdown_event.is_set():
-                    log.info("Reconnecting in %.0fs...", ha.reconnect_delay)
-                    try:
-                        await asyncio.wait_for(
-                            shutdown_event.wait(), timeout=ha.reconnect_delay
-                        )
-                    except asyncio.TimeoutError:
-                        pass  # Timeout means we should reconnect.
                     if shutdown_event.is_set():
                         break
+                    log.warning("HA connection failed: %s", exc)
+                except Exception:
+                    if shutdown_event.is_set():
+                        break
+                    log.exception("Unexpected error in HA connection")
 
-        # Run the connection lifecycle alongside the deck.
+                if shutdown_event.is_set():
+                    break
+
+                log.info("Reconnecting in %.0fs...", ha.reconnect_delay)
+                try:
+                    await asyncio.wait_for(
+                        shutdown_event.wait(), timeout=ha.reconnect_delay
+                    )
+                except asyncio.TimeoutError:
+                    pass  # Timeout expired -- time to reconnect.
+                if shutdown_event.is_set():
+                    break
+
         connection_task = asyncio.create_task(
             _connection_lifecycle(), name="ha-connection"
         )
 
-        log.info("Deckboard HA service running. Waiting for shutdown signal.")
+        log.info("Deckboard HA service running. Press Ctrl+C to stop.")
 
-        # Wait for shutdown signal.
+        # ------------------------------------------------------------------
+        # 8. Wait for shutdown.
+        # ------------------------------------------------------------------
         await shutdown_event.wait()
+        log.info("Shutdown signal received")
 
-        log.info("Shutting down...")
-
-        # Cancel the connection lifecycle.
+        # Cancel connection lifecycle and give it time to clean up.
         connection_task.cancel()
         try:
-            await connection_task
-        except asyncio.CancelledError:
+            await asyncio.wait_for(connection_task, timeout=5.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
             pass
 
         # Disconnect from HA.
-        await client.disconnect()
+        try:
+            await asyncio.wait_for(client.disconnect(), timeout=5.0)
+        except asyncio.TimeoutError:
+            log.warning("HA disconnect timed out")
 
     log.info("Deck closed. Goodbye.")
 

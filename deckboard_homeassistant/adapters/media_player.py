@@ -12,6 +12,7 @@ Normalized keys:
     artist          str     Current media artist (or "").
     media_type      str     Content type (music, video, etc.).
     source          str     Active input source.
+    entity_picture  str     HA-relative URL for album art (or "").
 
 Supported actions:
     play_pause          Toggle play/pause.
@@ -55,6 +56,7 @@ class MediaPlayerAdapter(DomainAdapter):
         artist = state.get("media_artist") or ""
         media_type = state.get("media_content_type") or ""
         source = state.get("source") or ""
+        entity_picture = state.get("entity_picture") or ""
 
         return {
             "is_playing": is_playing,
@@ -65,6 +67,7 @@ class MediaPlayerAdapter(DomainAdapter):
             "artist": artist,
             "media_type": media_type,
             "source": source,
+            "entity_picture": entity_picture,
         }
 
     def resolve_action(
@@ -123,4 +126,11 @@ class MediaPlayerAdapter(DomainAdapter):
                 raise ValueError(f"MediaPlayerAdapter: unknown action {action_name!r}")
 
     def default_state_keys(self) -> list[str]:
-        return ["is_playing", "volume_pct", "is_muted", "title"]
+        return [
+            "is_playing",
+            "volume_pct",
+            "is_muted",
+            "title",
+            "artist",
+            "entity_picture",
+        ]

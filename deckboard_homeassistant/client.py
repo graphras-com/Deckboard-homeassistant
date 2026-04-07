@@ -79,6 +79,13 @@ class HomeAssistantClient:
         self._shutting_down = True
         self._connected.clear()
 
+        # Reject pending requests first -- unblocks any coroutines
+        # waiting on service call / get_states results.
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(ConnectionError("Client disconnected"))
+        self._pending.clear()
+
         if self._receiver_task and not self._receiver_task.done():
             self._receiver_task.cancel()
             try:
@@ -87,15 +94,15 @@ class HomeAssistantClient:
                 pass
 
         if self._ws and not self._ws.closed:
-            await self._ws.close()
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
         if self._session and not self._session.closed:
-            await self._session.close()
-
-        # Reject all pending requests.
-        for fut in self._pending.values():
-            if not fut.done():
-                fut.set_exception(ConnectionError("Client disconnected"))
-        self._pending.clear()
+            try:
+                await self._session.close()
+            except Exception:
+                pass
 
         log.info("Disconnected from Home Assistant")
 
@@ -117,7 +124,8 @@ class HomeAssistantClient:
         Returns a list of state objects, each containing ``entity_id``,
         ``state``, ``attributes``, ``last_changed``, etc.
         """
-        await self._connected.wait()
+        if not self._connected.is_set():
+            raise ConnectionError("Not connected to Home Assistant")
         return await self._send_command("get_states")
 
     async def call_service(
@@ -134,8 +142,13 @@ class HomeAssistantClient:
             service: Service name (e.g. ``"toggle"``).
             service_data: Service call data.
             target: Target dict (``entity_id``, ``device_id``, or ``area_id``).
+
+        Returns the result from HA, or None on timeout/error.
+        Service calls are best-effort -- a timeout does not mean the
+        call failed on the HA side.
         """
-        await self._connected.wait()
+        if not self._connected.is_set():
+            raise ConnectionError("Not connected to Home Assistant")
 
         msg: dict[str, Any] = {
             "type": "call_service",
@@ -147,14 +160,15 @@ class HomeAssistantClient:
         if target:
             msg["target"] = target
 
-        return await self._send_command_raw(msg)
+        return await self._send_command_raw(msg, timeout=10.0)
 
     async def subscribe_events(self, event_type: str = "state_changed") -> int:
         """Subscribe to events of a given type.
 
         Returns the subscription ID.
         """
-        await self._connected.wait()
+        if not self._connected.is_set():
+            raise ConnectionError("Not connected to Home Assistant")
         result = await self._send_command_raw(
             {"type": "subscribe_events", "event_type": event_type}
         )
@@ -238,15 +252,16 @@ class HomeAssistantClient:
         log.info("Authenticated with HA %s", auth_resp.get("ha_version", "unknown"))
         self._connected.set()
 
+        # Start receiver loop BEFORE subscribing -- the receiver must be
+        # running to process the subscribe_events result message.
+        self._receiver_task = asyncio.create_task(
+            self._receiver_loop(), name="ha-ws-receiver"
+        )
+
         # Subscribe to state_changed events.
         sub_id = await self.subscribe_events("state_changed")
         self._state_sub_id = sub_id
         log.debug("Subscribed to state_changed (id=%s)", sub_id)
-
-        # Start receiver loop.
-        self._receiver_task = asyncio.create_task(
-            self._receiver_loop(), name="ha-ws-receiver"
-        )
 
     async def _receiver_loop(self) -> None:
         """Read messages from the WebSocket and dispatch them."""
@@ -289,7 +304,14 @@ class HomeAssistantClient:
             event = data.get("event", {})
             event_type = event.get("event_type")
             if event_type == "state_changed":
-                await self._handle_state_changed(event.get("data", {}))
+                # Dispatch as a separate task so the receiver loop is never
+                # blocked by callback processing (which may call deck.refresh
+                # or even trigger further service calls that need the receiver
+                # to resolve their response futures).
+                asyncio.create_task(
+                    self._handle_state_changed(event.get("data", {})),
+                    name="ha-state-changed",
+                )
 
         elif msg_type == "pong":
             msg_id = data.get("id")
@@ -322,7 +344,9 @@ class HomeAssistantClient:
         """Send a simple command and wait for the result."""
         return await self._send_command_raw({"type": cmd_type})
 
-    async def _send_command_raw(self, msg: dict[str, Any]) -> Any:
+    async def _send_command_raw(
+        self, msg: dict[str, Any], *, timeout: float = 30.0
+    ) -> Any:
         """Send a command message with an auto-assigned ID and await result."""
         if self._ws is None or self._ws.closed:
             raise ConnectionError("Not connected")
@@ -337,7 +361,7 @@ class HomeAssistantClient:
         await self._ws.send_json(msg)
 
         try:
-            return await asyncio.wait_for(fut, timeout=30.0)
+            return await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending.pop(msg_id, None)
             raise
